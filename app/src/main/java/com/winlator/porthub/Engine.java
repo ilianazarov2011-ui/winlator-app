@@ -38,6 +38,7 @@ public class Engine {
     public static final String DEF_MEM = "1024";
     public static final String DEF_FPS = "30";
     public static final String DEF_WEBENGINE = "off";
+    public static final String DEF_AUTOSTART = "on";
 
     public static final String[] SCREENS = {"960x540", "1280x720", "1024x576"};
     public static final String[] SCREEN_LABELS = {"960x540 быстрее", "1280x720 как было", "1024x576"};
@@ -49,6 +50,8 @@ public class Engine {
     public static final String[] FPS_LABELS = {"30", "60", "без лимита"};
     public static final String[] WE = {"off", "on"};
     public static final String[] WE_LABELS = {"Выкл", "Вкл (если зависает)"};
+    public static final String[] ON_OFF = {"off", "on"};
+    public static final String[] ON_OFF_LABELS = {"Выкл", "Вкл"};
 
     private static final StringBuilder LOG = new StringBuilder();
 
@@ -94,6 +97,10 @@ public class Engine {
 
     public static void reset(Context ctx) { prefs(ctx).edit().clear().apply(); }
 
+    public static boolean isAutostart(Context ctx) {
+        return "on".equals(get(ctx, "autostart", DEF_AUTOSTART));
+    }
+
     public static void turbo(Context ctx) {
         set(ctx, "screen", "960x540");
         set(ctx, "preset", "Быстро");
@@ -104,6 +111,31 @@ public class Engine {
     public static void restore(Context ctx) {
         reset(ctx);
         applyToExisting(ctx);
+    }
+
+    /** Включает в движке «фоновую защиту» — Wine-сессия не умирает между запусками. */
+    public static void enableKeepAlive(Context ctx) {
+        try {
+            SharedPreferences p = ctx.getSharedPreferences("com.winlator_preferences", Context.MODE_PRIVATE);
+            p.edit()
+                    .putBoolean("enable_background_protection", true)
+                    .putBoolean("enable_background_wakelock", true)
+                    .apply();
+            log("фоновая защита движка включена (сессия остаётся живой)");
+        } catch (Throwable t) { log("keepalive: " + t); }
+    }
+
+    /** Печатает настройки движка, чтобы видеть настоящие имена ключей. */
+    public static void dumpPrefs(Context ctx) {
+        try {
+            File dir = new File(ctx.getFilesDir().getParentFile(), "shared_prefs");
+            File[] fs = dir.listFiles();
+            if (fs == null || fs.length == 0) { log("shared_prefs: пусто"); return; }
+            for (File f : fs) {
+                log("--- prefs " + f.getName() + " ---");
+                log(tail(f, 40));
+            }
+        } catch (Throwable t) { log("prefs: " + t); }
     }
 
     private static String buildEnv(Context ctx) {
@@ -353,7 +385,6 @@ public class Engine {
         return best;
     }
 
-    /** Системный лог Android — там видно, что делает Wine и Box64. */
     public static String engineLog(Context ctx) {
         StringBuilder sb = new StringBuilder();
         try {
@@ -518,4 +549,4 @@ public class Engine {
             return out;
         } catch (Throwable t) { log("! скачивание: " + t); return null; }
     }
-            }
+    }
