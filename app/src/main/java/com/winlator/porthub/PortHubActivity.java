@@ -52,6 +52,9 @@ public class PortHubActivity extends AppCompatActivity {
     private static final int DIM = 0xFF8B949E;
     private static final int ACCENT = 0xFF3B82F6;
 
+    private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
+    private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
+
     private LinearLayout settingsBox;
     private TextView logView;
     private TextView statusView;
@@ -85,8 +88,6 @@ public class PortHubActivity extends AppCompatActivity {
     // ------------------------------------------------------------------ отрисовка
 
     private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-    private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
-    private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
 
     private TextView text(String s, float size, int color, boolean bold) {
         TextView t = new TextView(this);
@@ -186,7 +187,7 @@ public class PortHubActivity extends AppCompatActivity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, dp(4));
         lp.topMargin = dp(8);
         c.addView(bar, lp);
-        TextView hint = text("Первый запуск самый долгий: Студия строит кэш. Дальше — быстрее.", 11, DIM, false);
+        TextView hint = text("Если зависло на чёрном экране — верни настройку назад и запусти снова.", 11, DIM, false);
         hint.setPadding(0, dp(8), 0, 0);
         c.addView(hint);
         return c;
@@ -209,6 +210,25 @@ public class PortHubActivity extends AppCompatActivity {
     private View settingsCard() {
         LinearLayout c = card();
         c.addView(text("НАСТРОЙКИ", 11, DIM, true));
+
+        LinearLayout quick = new LinearLayout(this);
+        quick.setOrientation(LinearLayout.HORIZONTAL);
+        quick.setPadding(0, dp(8), 0, dp(4));
+        TextView turbo = smallButton("Турбо (быстрее)", () -> {
+            Engine.turbo(this);
+            buildSettings();
+            status("включён режим Турбо — запусти Студию");
+        });
+        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        tp.rightMargin = dp(6);
+        quick.addView(turbo, tp);
+        quick.addView(smallButton("Как было (надёжно)", () -> {
+            Engine.restore(this);
+            buildSettings();
+            status("настройки возвращены к рабочим");
+        }), new LinearLayout.LayoutParams(0, WRAP, 1f));
+        c.addView(quick);
+
         settingsBox = new LinearLayout(this);
         settingsBox.setOrientation(LinearLayout.VERTICAL);
         c.addView(settingsBox);
@@ -220,15 +240,15 @@ public class PortHubActivity extends AppCompatActivity {
         settingsBox.removeAllViews();
 
         addChips("Разрешение экрана", Engine.SCREENS, Engine.SCREEN_LABELS,
-                Engine.get(this, "screen", "960x540"), v -> {
+                Engine.get(this, "screen", Engine.DEF_SCREEN), v -> {
                     Engine.set(this, "screen", v);
                     buildSettings();
                     Engine.applyInBackground(this);
-                    status("разрешение: " + v + " — перезапусти Студию");
+                    status("разрешение: " + v);
                 });
 
         addChips("Скорость Box64", Engine.PRESETS, Engine.PRESETS,
-                Engine.get(this, "preset", "Быстро"), v -> {
+                Engine.get(this, "preset", Engine.DEF_PRESET), v -> {
                     Engine.set(this, "preset", v);
                     buildSettings();
                     Engine.applyInBackground(this);
@@ -236,7 +256,7 @@ public class PortHubActivity extends AppCompatActivity {
                 });
 
         addChips("Службы Wine при старте", Engine.STARTUP, Engine.STARTUP_LABELS,
-                Engine.get(this, "startup", "1"), v -> {
+                Engine.get(this, "startup", Engine.DEF_STARTUP), v -> {
                     Engine.set(this, "startup", v);
                     buildSettings();
                     Engine.applyInBackground(this);
@@ -244,7 +264,7 @@ public class PortHubActivity extends AppCompatActivity {
                 });
 
         addChips("Видео память, МБ", Engine.MEM, Engine.MEM,
-                Engine.get(this, "mem", "1024"), v -> {
+                Engine.get(this, "mem", Engine.DEF_MEM), v -> {
                     Engine.set(this, "mem", v);
                     buildSettings();
                     Engine.applyInBackground(this);
@@ -252,23 +272,12 @@ public class PortHubActivity extends AppCompatActivity {
                 });
 
         addChips("Лимит FPS", Engine.FPS, Engine.FPS_LABELS,
-                Engine.get(this, "fps", "30"), v -> {
+                Engine.get(this, "fps", Engine.DEF_FPS), v -> {
                     Engine.set(this, "fps", v);
                     buildSettings();
                     Engine.applyInBackground(this);
                     status("лимит FPS: " + v);
                 });
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(4), 0, 0);
-        row.addView(smallButton("Сбросить настройки", () -> {
-            Engine.reset(this);
-            buildSettings();
-            Engine.applyInBackground(this);
-            status("настройки сброшены");
-        }));
-        settingsBox.addView(row);
     }
 
     private void addChips(String title, String[] values, String[] labels, String current, Pick onPick) {
@@ -456,4 +465,4 @@ public class PortHubActivity extends AppCompatActivity {
             if (prev != null) prev.uncaughtException(t, e);
         });
     }
-            }
+                          }
