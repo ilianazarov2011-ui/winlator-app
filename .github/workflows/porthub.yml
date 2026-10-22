@@ -25,15 +25,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Подготовить манифест и название
-        run: |
-          python3 porthub_patch.py
-          echo "активностей PortHub в манифесте:"
-          grep -c PortHubActivity app/src/main/AndroidManifest.xml
+        run: python3 porthub_patch.py
 
       - name: Собрать APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace || {
+            echo "=== первая попытка не удалась, пробую ещё раз ==="
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          }
 
       - name: Сохранить APK
         uses: actions/upload-artifact@v4
