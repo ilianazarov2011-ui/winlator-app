@@ -15,12 +15,15 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 
 /** Логика PortHub: контейнер, настройки, скачивание Студии, запуск. */
 public class Engine {
@@ -29,12 +32,12 @@ public class Engine {
     public static final String CONTAINER_NAME = "Studio";
     private static final String DXVK = "dxvk-1.10.3";
 
-    // значения по умолчанию = конфигурация, которая точно работала
     public static final String DEF_SCREEN = "1280x720";
     public static final String DEF_PRESET = "Стабильно";
     public static final String DEF_STARTUP = "0";
     public static final String DEF_MEM = "1024";
     public static final String DEF_FPS = "30";
+    public static final String DEF_WEBENGINE = "off";
 
     public static final String[] SCREENS = {"960x540", "1280x720", "1024x576"};
     public static final String[] SCREEN_LABELS = {"960x540 быстрее", "1280x720 как было", "1024x576"};
@@ -44,6 +47,8 @@ public class Engine {
     public static final String[] MEM = {"512", "1024", "2048"};
     public static final String[] FPS = {"30", "60", "0"};
     public static final String[] FPS_LABELS = {"30", "60", "без лимита"};
+    public static final String[] WE = {"off", "on"};
+    public static final String[] WE_LABELS = {"Выкл", "Вкл (если зависает)"};
 
     private static final StringBuilder LOG = new StringBuilder();
 
@@ -89,7 +94,6 @@ public class Engine {
 
     public static void reset(Context ctx) { prefs(ctx).edit().clear().apply(); }
 
-    /** Один тап: быстро, но с оглядкой на совместимость. */
     public static void turbo(Context ctx) {
         set(ctx, "screen", "960x540");
         set(ctx, "preset", "Быстро");
@@ -97,7 +101,6 @@ public class Engine {
         applyToExisting(ctx);
     }
 
-    /** Вернуть всё как было (рабочая конфигурация). */
     public static void restore(Context ctx) {
         reset(ctx);
         applyToExisting(ctx);
@@ -112,11 +115,14 @@ public class Engine {
         } else if ("Быстро".equals(preset)) {
             box = "BOX64_DYNAREC_BIGBLOCK=2 BOX64_DYNAREC_SAFEFLAGS=1 BOX64_DYNAREC_FASTNAN=1";
         } else {
-            box = "BOX64_DYNAREC_BIGBLOCK=1";   // ровно то, что работало
+            box = "BOX64_DYNAREC_BIGBLOCK=1";
         }
         String env = box + " BOX64_NOBANNER=1 WINEDEBUG=-all";
         int fps = getInt(ctx, "fps", Integer.parseInt(DEF_FPS));
         if (fps > 0) env = env + " DXVK_FRAME_RATE=" + fps;
+        if ("on".equals(get(ctx, "webengine", DEF_WEBENGINE))) {
+            env = env + " QTWEBENGINE_DISABLE_SANDBOX=1 QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu";
+        }
         return env;
     }
 
@@ -213,9 +219,8 @@ public class Engine {
         c.saveData();
         log("настройки применены: экран=" + c.getScreenSize()
                 + " службы=" + c.getStartupSelection()
-                + " память=" + c.getExtra("videoMemorySize", "?")
                 + " профиль=" + get(ctx, "preset", DEF_PRESET)
-                + " fps=" + get(ctx, "fps", DEF_FPS));
+                + " webengine=" + get(ctx, "webengine", DEF_WEBENGINE));
     }
 
     public static void applyToExisting(Context ctx) {
@@ -239,13 +244,6 @@ public class Engine {
         log("  envVars = " + c.getEnvVars());
         log("  startupSelection = " + c.getStartupSelection());
         log("  rootDir = " + c.getRootDir());
-        log("  extra[videoMemorySize] = " + c.getExtra("videoMemorySize", "нет"));
-        File cf = c.getConfigFile();
-        if (cf != null && cf.exists()) {
-            log("--- файл " + cf.getName() + " ---");
-            log(read(cf));
-            log("--- /файл ---");
-        }
     }
 
     public static void launch(Context ctx, Container c, String execArgs) {
@@ -278,6 +276,122 @@ public class Engine {
     public static void openEngineUi(Context ctx) {
         try { ctx.startActivity(new Intent(ctx, com.winlator.MainActivity.class)); }
         catch (Throwable t) { log("! не открыть меню движка: " + t); }
+    }
+
+    // ------------------------------------------------------------------ зависшие процессы
+
+    public static int killWineProcesses() {
+        int me = android.os.Process.myPid();
+        int killed = 0;
+        File[] dirs = new File("/proc").listFiles();
+        if (dirs == null) return 0;
+        for (File d : dirs) {
+            if (!d.isDirectory()) continue;
+            int pid;
+            try { pid = Integer.parseInt(d.getName()); } catch (Throwable t) { continue; }
+            if (pid == me) continue;
+            String cmd = readCmd(d);
+            if (cmd == null) continue;
+            String l = cmd.toLowerCase();
+            if (l.contains("roblox") || l.contains("wine") || l.contains("box64")
+                    || l.contains("services.exe") || l.contains("explorer.exe")) {
+                try {
+                    android.os.Process.killProcess(pid);
+                    killed++;
+                    log("убит pid " + pid + ": " + cmd);
+                } catch (Throwable ignored) {}
+            }
+        }
+        log("убито процессов: " + killed);
+        return killed;
+    }
+
+    private static String readCmd(File dir) {
+        try (InputStream in = new FileInputStream(new File(dir, "cmdline"))) {
+            byte[] b = new byte[512];
+            int n = in.read(b);
+            if (n <= 0) return null;
+            String s = new String(b, 0, n).replace('\0', ' ').trim();
+            return s.isEmpty() ? null : s;
+        } catch (Throwable t) { return null; }
+    }
+
+    // ------------------------------------------------------------------ логи
+
+    public static String tail(File f, int lines) {
+        try {
+            ArrayList<String> all = new ArrayList<>();
+            try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+                String l;
+                while ((l = r.readLine()) != null) all.add(l);
+            }
+            int from = Math.max(0, all.size() - lines);
+            StringBuilder sb = new StringBuilder();
+            for (int i = from; i < all.size(); i++) sb.append(all.get(i)).append('\n');
+            return sb.toString();
+        } catch (Throwable t) { return "не прочитать: " + t; }
+    }
+
+    public static File newestStudioLog(File dir) {
+        if (dir == null) return null;
+        File best = null;
+        ArrayDeque<File> q = new ArrayDeque<>();
+        q.add(dir);
+        int guard = 0;
+        while (!q.isEmpty() && guard++ < 30000) {
+            File f = q.poll();
+            File[] kids = f.listFiles();
+            if (kids == null) continue;
+            for (File k : kids) {
+                if (k.isDirectory()) { q.add(k); continue; }
+                String n = k.getName().toLowerCase();
+                if (!n.endsWith(".log")) continue;
+                if (!k.getAbsolutePath().toLowerCase().contains("roblox")) continue;
+                if (best == null || k.lastModified() > best.lastModified()) best = k;
+            }
+        }
+        return best;
+    }
+
+    /** Системный лог Android — там видно, что делает Wine и Box64. */
+    public static String engineLog(Context ctx) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            Process p = Runtime.getRuntime().exec(
+                    new String[]{"logcat", "-d", "-v", "brief", "-t", "2000"});
+            BufferedReader r = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()));
+            String l;
+            while ((l = r.readLine()) != null) {
+                String low = l.toLowerCase();
+                if (low.contains("winlator") || low.contains("wine") || low.contains("box64")
+                        || low.contains("dxvk") || low.contains("vulkan") || low.contains("xserver")
+                        || low.contains("err:") || low.contains("fixme") || low.contains("porthub")) {
+                    sb.append(l).append('\n');
+                }
+            }
+            r.close();
+            p.destroy();
+        } catch (Throwable t) { log("logcat не сработал: " + t); }
+        if (sb.length() > 0) return sb.toString();
+
+        File best = null;
+        ArrayDeque<File> q = new ArrayDeque<>();
+        q.add(ctx.getFilesDir());
+        int guard = 0;
+        while (!q.isEmpty() && guard++ < 3000) {
+            File f = q.poll();
+            File[] kids = f.listFiles();
+            if (kids == null) continue;
+            for (File k : kids) {
+                if (k.isDirectory()) { q.add(k); continue; }
+                String n = k.getName().toLowerCase();
+                if (n.endsWith(".log") || n.endsWith(".txt")) {
+                    if (best == null || k.lastModified() > best.lastModified()) best = k;
+                }
+            }
+        }
+        if (best != null) return "файл " + best.getAbsolutePath() + "\n" + tail(best, 200);
+        return "ни logcat, ни файлов логов не нашлось";
     }
 
     // ------------------------------------------------------------------ студия
@@ -404,4 +518,4 @@ public class Engine {
             return out;
         } catch (Throwable t) { log("! скачивание: " + t); return null; }
     }
-}
+            }
