@@ -29,9 +29,15 @@ public class Engine {
     public static final String CONTAINER_NAME = "Studio";
     private static final String DXVK = "dxvk-1.10.3";
 
-    // значения для настроек (порядок = порядок кнопок)
-    public static final String[] SCREENS = {"960x540", "1024x576", "1280x720"};
-    public static final String[] SCREEN_LABELS = {"960x540 — быстро", "1024x576", "1280x720 — чётко"};
+    // значения по умолчанию = конфигурация, которая точно работала
+    public static final String DEF_SCREEN = "1280x720";
+    public static final String DEF_PRESET = "Стабильно";
+    public static final String DEF_STARTUP = "0";
+    public static final String DEF_MEM = "1024";
+    public static final String DEF_FPS = "30";
+
+    public static final String[] SCREENS = {"960x540", "1280x720", "1024x576"};
+    public static final String[] SCREEN_LABELS = {"960x540 быстрее", "1280x720 как было", "1024x576"};
     public static final String[] PRESETS = {"Стабильно", "Быстро", "Максимум"};
     public static final String[] STARTUP = {"0", "1"};
     public static final String[] STARTUP_LABELS = {"Все службы", "Только нужные"};
@@ -81,24 +87,35 @@ public class Engine {
         prefs(ctx).edit().putString(key, value).apply();
     }
 
-    public static void reset(Context ctx) {
-        prefs(ctx).edit().clear().apply();
+    public static void reset(Context ctx) { prefs(ctx).edit().clear().apply(); }
+
+    /** Один тап: быстро, но с оглядкой на совместимость. */
+    public static void turbo(Context ctx) {
+        set(ctx, "screen", "960x540");
+        set(ctx, "preset", "Быстро");
+        set(ctx, "startup", "0");
+        applyToExisting(ctx);
+    }
+
+    /** Вернуть всё как было (рабочая конфигурация). */
+    public static void restore(Context ctx) {
+        reset(ctx);
+        applyToExisting(ctx);
     }
 
     private static String buildEnv(Context ctx) {
-        String preset = get(ctx, "preset", "Быстро");
+        String preset = get(ctx, "preset", DEF_PRESET);
         String box;
-        if ("Стабильно".equals(preset)) {
-            box = "BOX64_DYNAREC_BIGBLOCK=1 BOX64_DYNAREC_SAFEFLAGS=2";
-        } else if ("Максимум".equals(preset)) {
+        if ("Максимум".equals(preset)) {
             box = "BOX64_DYNAREC_BIGBLOCK=3 BOX64_DYNAREC_SAFEFLAGS=0 BOX64_DYNAREC_FASTNAN=1"
                 + " BOX64_DYNAREC_FASTROUND=2 BOX64_DYNAREC_CALLRET=1 BOX64_DYNAREC_FORWARD=1024";
+        } else if ("Быстро".equals(preset)) {
+            box = "BOX64_DYNAREC_BIGBLOCK=2 BOX64_DYNAREC_SAFEFLAGS=1 BOX64_DYNAREC_FASTNAN=1";
         } else {
-            box = "BOX64_DYNAREC_BIGBLOCK=2 BOX64_DYNAREC_SAFEFLAGS=1 BOX64_DYNAREC_FASTNAN=1"
-                + " BOX64_DYNAREC_FASTROUND=1";
+            box = "BOX64_DYNAREC_BIGBLOCK=1";   // ровно то, что работало
         }
-        String env = box + " BOX64_NOBANNER=1 BOX64_DYNAREC_STRONGMEM=0 WINEDEBUG=-all";
-        int fps = getInt(ctx, "fps", 30);
+        String env = box + " BOX64_NOBANNER=1 WINEDEBUG=-all";
+        int fps = getInt(ctx, "fps", Integer.parseInt(DEF_FPS));
         if (fps > 0) env = env + " DXVK_FRAME_RATE=" + fps;
         return env;
     }
@@ -107,7 +124,6 @@ public class Engine {
 
     public static ContainerManager manager(Context ctx) { return new ContainerManager(ctx); }
 
-    /** Настоящий id лежит в поле Container.id. */
     public static int id(Container c) {
         if (c == null) return -1;
         try {
@@ -144,7 +160,7 @@ public class Engine {
         final JSONObject data = new JSONObject();
         try {
             data.put("name", CONTAINER_NAME);
-            data.put("screenSize", get(ctx, "screen", "960x540"));
+            data.put("screenSize", get(ctx, "screen", DEF_SCREEN));
         } catch (Throwable ignored) {}
 
         final Container[] made = new Container[1];
@@ -186,23 +202,22 @@ public class Engine {
 
     public static void applySettings(Context ctx, Container c) {
         if (c.getName() == null || c.getName().isEmpty()) c.setName(CONTAINER_NAME);
-        c.setScreenSize(get(ctx, "screen", "960x540"));
+        c.setScreenSize(get(ctx, "screen", DEF_SCREEN));
         c.setGraphicsDriver("system");
         c.setDXWrapper(DXVK);
         c.setAudioDriver("alsa");
         c.setEnvVars(buildEnv(ctx));
-        c.setStartupSelection((byte) getInt(ctx, "startup", 1));
+        c.setStartupSelection((byte) getInt(ctx, "startup", Integer.parseInt(DEF_STARTUP)));
         c.putExtra("winVersion", "win10");
-        c.putExtra("videoMemorySize", get(ctx, "mem", "1024"));
+        c.putExtra("videoMemorySize", get(ctx, "mem", DEF_MEM));
         c.saveData();
         log("настройки применены: экран=" + c.getScreenSize()
                 + " службы=" + c.getStartupSelection()
                 + " память=" + c.getExtra("videoMemorySize", "?")
-                + " fps=" + get(ctx, "fps", "30")
-                + " профиль=" + get(ctx, "preset", "Быстро"));
+                + " профиль=" + get(ctx, "preset", DEF_PRESET)
+                + " fps=" + get(ctx, "fps", DEF_FPS));
     }
 
-    /** Переприменить настройки ко всем существующим контейнерам. */
     public static void applyToExisting(Context ctx) {
         try {
             ContainerManager cm = manager(ctx);
@@ -221,13 +236,10 @@ public class Engine {
         log("  screenSize = " + c.getScreenSize());
         log("  graphicsDriver = " + c.getGraphicsDriver());
         log("  dxwrapper = " + c.getDXWrapper());
-        log("  audioDriver = " + c.getAudioDriver());
-        log("  box64Preset = " + c.getBox64Preset());
         log("  envVars = " + c.getEnvVars());
         log("  startupSelection = " + c.getStartupSelection());
         log("  rootDir = " + c.getRootDir());
-        String[] keys = {"winVersion", "videoMemorySize", "box64Version", "execArgs"};
-        for (String k : keys) log("  extra[" + k + "] = " + c.getExtra(k, "нет"));
+        log("  extra[videoMemorySize] = " + c.getExtra("videoMemorySize", "нет"));
         File cf = c.getConfigFile();
         if (cf != null && cf.exists()) {
             log("--- файл " + cf.getName() + " ---");
