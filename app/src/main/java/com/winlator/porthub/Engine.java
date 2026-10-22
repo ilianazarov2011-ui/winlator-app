@@ -3,6 +3,7 @@ package com.winlator.porthub;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Environment;
 import android.util.Log;
 
@@ -26,8 +27,17 @@ public class Engine {
 
     private static final String TAG = "PortHub";
     public static final String CONTAINER_NAME = "Studio";
-    private static final String ENV_VARS = "DXVK_FRAME_RATE=30 BOX64_DYNAREC_BIGBLOCK=1";
     private static final String DXVK = "dxvk-1.10.3";
+
+    // значения для настроек (порядок = порядок кнопок)
+    public static final String[] SCREENS = {"960x540", "1024x576", "1280x720"};
+    public static final String[] SCREEN_LABELS = {"960x540 — быстро", "1024x576", "1280x720 — чётко"};
+    public static final String[] PRESETS = {"Стабильно", "Быстро", "Максимум"};
+    public static final String[] STARTUP = {"0", "1"};
+    public static final String[] STARTUP_LABELS = {"Все службы", "Только нужные"};
+    public static final String[] MEM = {"512", "1024", "2048"};
+    public static final String[] FPS = {"30", "60", "0"};
+    public static final String[] FPS_LABELS = {"30", "60", "без лимита"};
 
     private static final StringBuilder LOG = new StringBuilder();
 
@@ -53,11 +63,51 @@ public class Engine {
 
     private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) {} }
 
+    // ------------------------------------------------------------------ настройки
+
+    private static SharedPreferences prefs(Context ctx) {
+        return ctx.getSharedPreferences("porthub", Context.MODE_PRIVATE);
+    }
+
+    public static String get(Context ctx, String key, String def) {
+        return prefs(ctx).getString(key, def);
+    }
+
+    public static int getInt(Context ctx, String key, int def) {
+        try { return Integer.parseInt(get(ctx, key, String.valueOf(def))); } catch (Throwable t) { return def; }
+    }
+
+    public static void set(Context ctx, String key, String value) {
+        prefs(ctx).edit().putString(key, value).apply();
+    }
+
+    public static void reset(Context ctx) {
+        prefs(ctx).edit().clear().apply();
+    }
+
+    private static String buildEnv(Context ctx) {
+        String preset = get(ctx, "preset", "Быстро");
+        String box;
+        if ("Стабильно".equals(preset)) {
+            box = "BOX64_DYNAREC_BIGBLOCK=1 BOX64_DYNAREC_SAFEFLAGS=2";
+        } else if ("Максимум".equals(preset)) {
+            box = "BOX64_DYNAREC_BIGBLOCK=3 BOX64_DYNAREC_SAFEFLAGS=0 BOX64_DYNAREC_FASTNAN=1"
+                + " BOX64_DYNAREC_FASTROUND=2 BOX64_DYNAREC_CALLRET=1 BOX64_DYNAREC_FORWARD=1024";
+        } else {
+            box = "BOX64_DYNAREC_BIGBLOCK=2 BOX64_DYNAREC_SAFEFLAGS=1 BOX64_DYNAREC_FASTNAN=1"
+                + " BOX64_DYNAREC_FASTROUND=1";
+        }
+        String env = box + " BOX64_NOBANNER=1 BOX64_DYNAREC_STRONGMEM=0 WINEDEBUG=-all";
+        int fps = getInt(ctx, "fps", 30);
+        if (fps > 0) env = env + " DXVK_FRAME_RATE=" + fps;
+        return env;
+    }
+
     // ------------------------------------------------------------------ контейнер
 
     public static ContainerManager manager(Context ctx) { return new ContainerManager(ctx); }
 
-    /** Настоящий id лежит в поле Container.id, а не в имени папки. */
+    /** Настоящий id лежит в поле Container.id. */
     public static int id(Container c) {
         if (c == null) return -1;
         try {
@@ -76,7 +126,7 @@ public class Engine {
     public static Container ensureContainer(Context ctx, ContainerManager cm) {
         for (Object o : cm.getContainers()) {
             Container c = (Container) o;
-            log("  контейнер id=" + id(c) + " \"" + c.getName() + "\" папка=" + c.getRootDir());
+            log("  контейнер id=" + id(c) + " \"" + c.getName() + "\"");
         }
         for (Object o : cm.getContainers()) {
             Container c = (Container) o;
@@ -94,7 +144,7 @@ public class Engine {
         final JSONObject data = new JSONObject();
         try {
             data.put("name", CONTAINER_NAME);
-            data.put("screenSize", "1280x720");
+            data.put("screenSize", get(ctx, "screen", "960x540"));
         } catch (Throwable ignored) {}
 
         final Container[] made = new Container[1];
@@ -129,23 +179,39 @@ public class Engine {
                 sleep(2000);
             }
         }
-        applySettings(c);
+        applySettings(ctx, c);
         dump(c);
         return c;
     }
 
-    public static void applySettings(Container c) {
+    public static void applySettings(Context ctx, Container c) {
         if (c.getName() == null || c.getName().isEmpty()) c.setName(CONTAINER_NAME);
-        c.setScreenSize("1280x720");
+        c.setScreenSize(get(ctx, "screen", "960x540"));
         c.setGraphicsDriver("system");
         c.setDXWrapper(DXVK);
         c.setAudioDriver("alsa");
-        c.setEnvVars(ENV_VARS);
-        c.setStartupSelection((byte) 0);
+        c.setEnvVars(buildEnv(ctx));
+        c.setStartupSelection((byte) getInt(ctx, "startup", 1));
         c.putExtra("winVersion", "win10");
-        c.putExtra("videoMemorySize", "1024");
+        c.putExtra("videoMemorySize", get(ctx, "mem", "1024"));
         c.saveData();
-        log("настройки записаны");
+        log("настройки применены: экран=" + c.getScreenSize()
+                + " службы=" + c.getStartupSelection()
+                + " память=" + c.getExtra("videoMemorySize", "?")
+                + " fps=" + get(ctx, "fps", "30")
+                + " профиль=" + get(ctx, "preset", "Быстро"));
+    }
+
+    /** Переприменить настройки ко всем существующим контейнерам. */
+    public static void applyToExisting(Context ctx) {
+        try {
+            ContainerManager cm = manager(ctx);
+            for (Object o : cm.getContainers()) applySettings(ctx, (Container) o);
+        } catch (Throwable t) { log("! применить настройки: " + t); }
+    }
+
+    public static void applyInBackground(Context ctx) {
+        new Thread(() -> applyToExisting(ctx)).start();
     }
 
     public static void dump(Container c) {
@@ -156,14 +222,11 @@ public class Engine {
         log("  graphicsDriver = " + c.getGraphicsDriver());
         log("  dxwrapper = " + c.getDXWrapper());
         log("  audioDriver = " + c.getAudioDriver());
-        log("  wineVersion = " + c.getWineVersion());
         log("  box64Preset = " + c.getBox64Preset());
         log("  envVars = " + c.getEnvVars());
         log("  startupSelection = " + c.getStartupSelection());
-        log("  winComponents = " + c.getWinComponents());
-        log("  drives = " + c.getDrives());
         log("  rootDir = " + c.getRootDir());
-        String[] keys = {"winVersion", "videoMemorySize", "box64Version", "desktopTheme", "execArgs"};
+        String[] keys = {"winVersion", "videoMemorySize", "box64Version", "execArgs"};
         for (String k : keys) log("  extra[" + k + "] = " + c.getExtra(k, "нет"));
         File cf = c.getConfigFile();
         if (cf != null && cf.exists()) {
@@ -174,7 +237,7 @@ public class Engine {
     }
 
     public static void launch(Context ctx, Container c, String execArgs) {
-        final ContainerManager cm = manager(ctx);
+        ContainerManager cm = manager(ctx);
         int i = id(c);
         log("--- запуск ---");
         log("id контейнера = " + i + ", папка = " + c.getRootDir());
@@ -329,4 +392,4 @@ public class Engine {
             return out;
         } catch (Throwable t) { log("! скачивание: " + t); return null; }
     }
-            }
+}
