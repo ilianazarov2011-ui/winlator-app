@@ -187,7 +187,7 @@ public class PortHubActivity extends AppCompatActivity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, dp(4));
         lp.topMargin = dp(8);
         c.addView(bar, lp);
-        TextView hint = text("Если зависло на чёрном экране — верни настройку назад и запусти снова.", 11, DIM, false);
+        TextView hint = text("Если висит «Запуск...» — жми «Сброс сессии», потом Пуск снова.", 11, DIM, false);
         hint.setPadding(0, dp(8), 0, 0);
         c.addView(hint);
         return c;
@@ -195,15 +195,34 @@ public class PortHubActivity extends AppCompatActivity {
 
     private View actionsCard() {
         LinearLayout c = card();
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
         TextView a = smallButton("Меню движка", () -> Engine.openEngineUi(this));
-        TextView b = smallButton("Скачать Студию заново", this::downloadOnly);
+        TextView b = smallButton("Сброс сессии", this::resetSession);
         LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(0, WRAP, 1f);
         p1.rightMargin = dp(6);
-        row.addView(a, p1);
-        row.addView(b, new LinearLayout.LayoutParams(0, WRAP, 1f));
-        c.addView(row);
+        row1.addView(a, p1);
+        row1.addView(b, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        c.addView(row1);
+
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        row2.setPadding(0, dp(6), 0, 0);
+        TextView d = smallButton("Лог движка", this::dumpEngineLog);
+        TextView e = smallButton("Лог Студии", this::dumpStudioLog);
+        LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        p2.rightMargin = dp(6);
+        row2.addView(d, p2);
+        row2.addView(e, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        c.addView(row2);
+
+        LinearLayout row3 = new LinearLayout(this);
+        row3.setOrientation(LinearLayout.HORIZONTAL);
+        row3.setPadding(0, dp(6), 0, 0);
+        row3.addView(smallButton("Скачать Студию заново", this::downloadOnly),
+                new LinearLayout.LayoutParams(MATCH, WRAP));
+        c.addView(row3);
         return c;
     }
 
@@ -217,7 +236,7 @@ public class PortHubActivity extends AppCompatActivity {
         TextView turbo = smallButton("Турбо (быстрее)", () -> {
             Engine.turbo(this);
             buildSettings();
-            status("включён режим Турбо — запусти Студию");
+            status("включён режим Турбо");
         });
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, WRAP, 1f);
         tp.rightMargin = dp(6);
@@ -277,6 +296,14 @@ public class PortHubActivity extends AppCompatActivity {
                     buildSettings();
                     Engine.applyInBackground(this);
                     status("лимит FPS: " + v);
+                });
+
+        addChips("WebEngine (UI Студии)", Engine.WE, Engine.WE_LABELS,
+                Engine.get(this, "webengine", Engine.DEF_WEBENGINE), v -> {
+                    Engine.set(this, "webengine", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("WebEngine: " + (v.equals("on") ? "включено" : "выключено"));
                 });
     }
 
@@ -391,6 +418,37 @@ public class PortHubActivity extends AppCompatActivity {
         });
     }
 
+    private void resetSession() {
+        runBg("Сброс сессии", () -> {
+            Engine.log("ищу зависшие процессы Wine/Studio...");
+            Engine.killWineProcesses();
+        });
+    }
+
+    private void dumpStudioLog() {
+        runBg("Читаю лог Студии", () -> {
+            ContainerManager cm = Engine.manager(this);
+            for (Object o : cm.getContainers()) {
+                File log = Engine.newestStudioLog(((Container) o).getRootDir());
+                if (log != null) {
+                    Engine.log("=== ЛОГ СТУДИИ: " + log.getAbsolutePath() + " ===");
+                    Engine.log(Engine.tail(log, 150));
+                    Engine.log("=== /ЛОГ СТУДИИ ===");
+                    return;
+                }
+            }
+            Engine.log("лог Студии не найден");
+        });
+    }
+
+    private void dumpEngineLog() {
+        runBg("Читаю лог движка", () -> {
+            Engine.log("=== ЛОГ ДВИЖКА ===");
+            Engine.log(Engine.engineLog(this));
+            Engine.log("=== /ЛОГ ДВИЖКА ===");
+        });
+    }
+
     private void diagnostics() {
         StringBuilder sb = new StringBuilder();
         sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append('\n');
@@ -465,4 +523,4 @@ public class PortHubActivity extends AppCompatActivity {
             if (prev != null) prev.uncaughtException(t, e);
         });
     }
-                          }
+    }
