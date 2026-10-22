@@ -4,11 +4,15 @@ import android.Manifest;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Icon;
 import android.graphics.drawable.RippleDrawable;
 import android.opengl.EGL14;
 import android.opengl.EGLConfig;
@@ -40,6 +44,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Locale;
 
@@ -54,6 +59,8 @@ public class PortHubActivity extends AppCompatActivity {
 
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
+
+    private static boolean autoLaunched = false;
 
     private LinearLayout settingsBox;
     private TextView logView;
@@ -83,6 +90,28 @@ public class PortHubActivity extends AppCompatActivity {
             try { requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 100); } catch (Throwable ignored) {}
         }
         refreshLog();
+
+        Engine.enableKeepAlive(this);
+        Engine.dumpPrefs(this);
+        makeShortcut(false);
+
+        boolean fromShortcut = "studio".equals(getIntent() == null ? null : getIntent().getStringExtra("go"));
+        if (fromShortcut) {
+            ui.postDelayed(this::startStudio, 300);
+        } else if (Engine.isAutostart(this) && !autoLaunched) {
+            autoLaunched = true;
+            Engine.log("автозапуск: поднимаю контейнер сразу при открытии");
+            ui.postDelayed(this::startStudio, 1200);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && "studio".equals(intent.getStringExtra("go"))) {
+            ui.postDelayed(this::startStudio, 300);
+        }
     }
 
     // ------------------------------------------------------------------ отрисовка
@@ -220,8 +249,12 @@ public class PortHubActivity extends AppCompatActivity {
         LinearLayout row3 = new LinearLayout(this);
         row3.setOrientation(LinearLayout.HORIZONTAL);
         row3.setPadding(0, dp(6), 0, 0);
+        TextView f = smallButton("Ярлык на рабочий стол", () -> makeShortcut(true));
+        LinearLayout.LayoutParams p3 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        p3.rightMargin = dp(6);
+        row3.addView(f, p3);
         row3.addView(smallButton("Скачать Студию заново", this::downloadOnly),
-                new LinearLayout.LayoutParams(MATCH, WRAP));
+                new LinearLayout.LayoutParams(0, WRAP, 1f));
         c.addView(row3);
         return c;
     }
@@ -257,6 +290,13 @@ public class PortHubActivity extends AppCompatActivity {
 
     private void buildSettings() {
         settingsBox.removeAllViews();
+
+        addChips("Запускать Студию при открытии", Engine.ON_OFF, Engine.ON_OFF_LABELS,
+                Engine.get(this, "autostart", Engine.DEF_AUTOSTART), v -> {
+                    Engine.set(this, "autostart", v);
+                    buildSettings();
+                    status("автозапуск: " + (v.equals("on") ? "включён" : "выключен"));
+                });
 
         addChips("Разрешение экрана", Engine.SCREENS, Engine.SCREEN_LABELS,
                 Engine.get(this, "screen", Engine.DEF_SCREEN), v -> {
@@ -357,6 +397,40 @@ public class PortHubActivity extends AppCompatActivity {
         s.addView(logView);
         c.addView(s, new LinearLayout.LayoutParams(MATCH, dp(170)));
         return c;
+    }
+
+    // ------------------------------------------------------------------ ярлык
+
+    private void makeShortcut(boolean pin) {
+        try {
+            ShortcutManager sm = getSystemService(ShortcutManager.class);
+            if (sm == null) { toast("Ярлыки не поддерживаются"); return; }
+            Intent it = new Intent(this, PortHubActivity.class);
+            it.setAction("ai.venice.porthub.STUDIO");
+            it.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            it.putExtra("go", "studio");
+            ShortcutInfo si = new ShortcutInfo.Builder(this, "studio")
+                    .setShortLabel("Roblox Studio")
+                    .setLongLabel("Запустить Roblox Studio")
+                    .setRank(0)
+                    .setIcon(Icon.createWithResource(this, com.winlator.R.mipmap.ic_launcher))
+                    .setIntent(it)
+                    .build();
+            sm.setDynamicShortcuts(Collections.singletonList(si));
+            if (pin) {
+                if (sm.isRequestPinShortcutSupported()) {
+                    sm.requestPinShortcut(si, null);
+                    toast("Подтверди добавление ярлыка");
+                } else {
+                    toast("Ярлык в меню иконки (долгое нажатие)");
+                }
+            } else {
+                Engine.log("ярлык «Roblox Studio» зарегистрирован");
+            }
+        } catch (Throwable t) {
+            Engine.log("ярлык: " + t);
+            if (pin) toast("Не получилось: " + t);
+        }
     }
 
     // ------------------------------------------------------------------ действия
@@ -523,4 +597,4 @@ public class PortHubActivity extends AppCompatActivity {
             if (prev != null) prev.uncaughtException(t, e);
         });
     }
-    }
+        }
