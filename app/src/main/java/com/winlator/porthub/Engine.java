@@ -17,6 +17,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
@@ -56,20 +57,31 @@ public class Engine {
 
     public static ContainerManager manager(Context ctx) { return new ContainerManager(ctx); }
 
+    /** Настоящий id лежит в поле Container.id, а не в имени папки. */
     public static int id(Container c) {
-        if (c == null || c.getRootDir() == null) return -1;
-        try { return Integer.parseInt(c.getRootDir().getName()); } catch (Throwable t) { return -1; }
+        if (c == null) return -1;
+        try {
+            Field f = Container.class.getDeclaredField("id");
+            f.setAccessible(true);
+            Object v = f.get(c);
+            if (v instanceof Number) return ((Number) v).intValue();
+        } catch (Throwable t) { log("поле id недоступно: " + t); }
+        try {
+            File r = c.getRootDir();
+            if (r != null) return Integer.parseInt(r.getName());
+        } catch (Throwable ignored) {}
+        return -1;
     }
 
     public static Container ensureContainer(Context ctx, ContainerManager cm) {
         for (Object o : cm.getContainers()) {
             Container c = (Container) o;
-            log("  контейнер #" + id(c) + " \"" + c.getName() + "\"");
+            log("  контейнер id=" + id(c) + " \"" + c.getName() + "\" папка=" + c.getRootDir());
         }
         for (Object o : cm.getContainers()) {
             Container c = (Container) o;
             if (findStudioExe(c.getRootDir()) != null) {
-                log("в контейнере #" + id(c) + " уже стоит Студия — беру его");
+                log("в контейнере id=" + id(c) + " уже стоит Студия — беру его");
                 return finish(ctx, c);
             }
         }
@@ -138,6 +150,7 @@ public class Engine {
 
     public static void dump(Container c) {
         log("--- состояние контейнера ---");
+        log("  id = " + id(c));
         log("  name = " + c.getName());
         log("  screenSize = " + c.getScreenSize());
         log("  graphicsDriver = " + c.getGraphicsDriver());
@@ -161,12 +174,27 @@ public class Engine {
     }
 
     public static void launch(Context ctx, Container c, String execArgs) {
+        final ContainerManager cm = manager(ctx);
+        int i = id(c);
+        log("--- запуск ---");
+        log("id контейнера = " + i + ", папка = " + c.getRootDir());
+
+        if (i < 0) {
+            log("! id не определился — открываю меню движка");
+            openEngineUi(ctx);
+            return;
+        }
+
+        Container fresh = cm.getContainerById(i);
+        log("getContainerById(" + i + ") -> " + (fresh == null ? "null" : "\"" + fresh.getName() + "\""));
+        if (fresh != null) c = fresh;
+
         if (execArgs != null) {
             c.putExtra("execArgs", execArgs);
             c.saveData();
+            log("команда запуска: " + execArgs);
         }
-        int i = id(c);
-        log("запускаю контейнер #" + i + ", команда: " + execArgs);
+
         Intent it = new Intent(ctx, XServerDisplayActivity.class);
         it.putExtra("container_id", i);
         ctx.startActivity(it);
@@ -301,4 +329,4 @@ public class Engine {
             return out;
         } catch (Throwable t) { log("! скачивание: " + t); return null; }
     }
-                  }
+            }
