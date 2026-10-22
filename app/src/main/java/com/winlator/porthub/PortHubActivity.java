@@ -5,8 +5,11 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.opengl.EGL14;
 import android.opengl.EGLConfig;
 import android.opengl.EGLContext;
@@ -19,11 +22,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.StatFs;
 import android.util.Log;
-import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -42,17 +45,29 @@ import java.util.Locale;
 
 public class PortHubActivity extends AppCompatActivity {
 
+    private static final int BG = 0xFF0B0F14;
+    private static final int CARD = 0xFF151B23;
+    private static final int CARD_HI = 0xFF1D2632;
+    private static final int TEXT = 0xFFE6EDF3;
+    private static final int DIM = 0xFF8B949E;
+    private static final int ACCENT = 0xFF3B82F6;
+
+    private LinearLayout settingsBox;
     private TextView logView;
     private TextView statusView;
+    private TextView diagView;
+    private ProgressBar bar;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean busy = false;
+
+    private interface Pick { void on(String value); }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         installCrashHandler();
         setContentView(buildUi());
-        Engine.log("=== PortHub запущен, " + new Date() + " ===");
+        Engine.log("=== PortHub 0.1 запущен, " + new Date() + " ===");
 
         File crash = new File(getFilesDir(), "crash.txt");
         if (crash.exists()) {
@@ -67,49 +82,248 @@ public class PortHubActivity extends AppCompatActivity {
         refreshLog();
     }
 
+    // ------------------------------------------------------------------ отрисовка
+
     private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+    private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
+    private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
+
+    private TextView text(String s, float size, int color, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(null, Typeface.BOLD);
+        return t;
+    }
+
+    private GradientDrawable round(int color, int radiusDp) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(dp(radiusDp));
+        return g;
+    }
+
+    private Drawable press(Drawable base) {
+        return new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), base, null);
+    }
+
+    private LinearLayout card() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackground(round(CARD, 16));
+        c.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        lp.bottomMargin = dp(12);
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private View bigButton(String label, int color, Runnable onClick) {
+        TextView b = text(label, 17, 0xFFFFFFFF, true);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(16), dp(16), dp(16), dp(16));
+        b.setBackground(press(round(color, 14)));
+        b.setClickable(true);
+        b.setOnClickListener(v -> onClick.run());
+        return b;
+    }
+
+    private TextView smallButton(String label, Runnable onClick) {
+        TextView b = text(label, 12, TEXT, false);
+        b.setPadding(dp(10), dp(5), dp(10), dp(5));
+        b.setBackground(press(round(CARD_HI, 10)));
+        b.setClickable(true);
+        b.setOnClickListener(v -> onClick.run());
+        return b;
+    }
+
+    private TextView chip(String label, boolean selected) {
+        TextView t = text(label, 12, selected ? 0xFFFFFFFF : TEXT, selected);
+        t.setPadding(dp(12), dp(8), dp(12), dp(8));
+        t.setBackground(press(round(selected ? ACCENT : CARD_HI, 20)));
+        t.setClickable(true);
+        return t;
+    }
 
     private View buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(12), dp(12), dp(12), dp(12));
+        root.setBackgroundColor(BG);
 
-        TextView title = new TextView(this);
-        title.setText("PortHub — Roblox Studio на телефоне");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-        title.setTypeface(null, Typeface.BOLD);
-        root.addView(title);
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setPadding(dp(16), dp(16), dp(16), dp(10));
+        header.addView(text("PortHub", 24, TEXT, true));
+        header.addView(text("Windows-программы на телефоне · бета 0.1", 12, DIM, false));
+        root.addView(header);
 
-        statusView = new TextView(this);
-        statusView.setText("готов");
-        statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        statusView.setTextColor(Color.GRAY);
-        root.addView(statusView);
+        ScrollView sc = new ScrollView(this);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(12), 0, dp(12), dp(12));
+        sc.addView(content);
+        root.addView(sc, new LinearLayout.LayoutParams(MATCH, 0, 1f));
 
-        root.addView(button("ЗАПУСТИТЬ СТУДИЮ", this::startStudio));
-        root.addView(button("Меню движка", () -> Engine.openEngineUi(this)));
-        root.addView(button("Скачать Студию заново", this::downloadOnly));
-        root.addView(button("Диагностика", this::diagnostics));
-        root.addView(button("Скопировать лог", this::copyLog));
-        root.addView(button("Очистить лог", () -> { Engine.clearLog(); refreshLog(); }));
+        content.addView(primaryCard());
+        content.addView(actionsCard());
+        content.addView(settingsCard());
+        content.addView(diagCard());
 
-        logView = new TextView(this);
-        logView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        logView.setTypeface(Typeface.MONOSPACE);
-        logView.setTextIsSelectable(true);
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(logView);
-        root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(logCard());
         return root;
     }
 
-    private Button button(String text, Runnable action) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setOnClickListener(v -> action.run());
-        return b;
+    private View primaryCard() {
+        LinearLayout c = card();
+        c.addView(bigButton("ЗАПУСТИТЬ СТУДИЮ", ACCENT, this::startStudio));
+        statusView = text("готов", 12, DIM, false);
+        statusView.setPadding(0, dp(10), 0, 0);
+        c.addView(statusView);
+        bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setVisibility(View.GONE);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, dp(4));
+        lp.topMargin = dp(8);
+        c.addView(bar, lp);
+        TextView hint = text("Первый запуск самый долгий: Студия строит кэш. Дальше — быстрее.", 11, DIM, false);
+        hint.setPadding(0, dp(8), 0, 0);
+        c.addView(hint);
+        return c;
     }
+
+    private View actionsCard() {
+        LinearLayout c = card();
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView a = smallButton("Меню движка", () -> Engine.openEngineUi(this));
+        TextView b = smallButton("Скачать Студию заново", this::downloadOnly);
+        LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        p1.rightMargin = dp(6);
+        row.addView(a, p1);
+        row.addView(b, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        c.addView(row);
+        return c;
+    }
+
+    private View settingsCard() {
+        LinearLayout c = card();
+        c.addView(text("НАСТРОЙКИ", 11, DIM, true));
+        settingsBox = new LinearLayout(this);
+        settingsBox.setOrientation(LinearLayout.VERTICAL);
+        c.addView(settingsBox);
+        buildSettings();
+        return c;
+    }
+
+    private void buildSettings() {
+        settingsBox.removeAllViews();
+
+        addChips("Разрешение экрана", Engine.SCREENS, Engine.SCREEN_LABELS,
+                Engine.get(this, "screen", "960x540"), v -> {
+                    Engine.set(this, "screen", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("разрешение: " + v + " — перезапусти Студию");
+                });
+
+        addChips("Скорость Box64", Engine.PRESETS, Engine.PRESETS,
+                Engine.get(this, "preset", "Быстро"), v -> {
+                    Engine.set(this, "preset", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("профиль: " + v);
+                });
+
+        addChips("Службы Wine при старте", Engine.STARTUP, Engine.STARTUP_LABELS,
+                Engine.get(this, "startup", "1"), v -> {
+                    Engine.set(this, "startup", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("службы Wine: " + (v.equals("1") ? "только нужные" : "все"));
+                });
+
+        addChips("Видео память, МБ", Engine.MEM, Engine.MEM,
+                Engine.get(this, "mem", "1024"), v -> {
+                    Engine.set(this, "mem", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("видео память: " + v);
+                });
+
+        addChips("Лимит FPS", Engine.FPS, Engine.FPS_LABELS,
+                Engine.get(this, "fps", "30"), v -> {
+                    Engine.set(this, "fps", v);
+                    buildSettings();
+                    Engine.applyInBackground(this);
+                    status("лимит FPS: " + v);
+                });
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(4), 0, 0);
+        row.addView(smallButton("Сбросить настройки", () -> {
+            Engine.reset(this);
+            buildSettings();
+            Engine.applyInBackground(this);
+            status("настройки сброшены");
+        }));
+        settingsBox.addView(row);
+    }
+
+    private void addChips(String title, String[] values, String[] labels, String current, Pick onPick) {
+        settingsBox.addView(text(title, 12, DIM, false));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(6), 0, dp(12));
+        for (int i = 0; i < values.length; i++) {
+            final String v = values[i];
+            TextView ch = chip(labels[i], v.equals(current));
+            ch.setOnClickListener(x -> onPick.on(v));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(WRAP, WRAP);
+            lp.rightMargin = dp(6);
+            row.addView(ch, lp);
+        }
+        settingsBox.addView(row);
+    }
+
+    private View diagCard() {
+        LinearLayout c = card();
+        c.addView(text("ДИАГНОСТИКА", 11, DIM, true));
+        diagView = text("нажми «Проверить»", 12, DIM, false);
+        diagView.setPadding(0, dp(8), 0, dp(10));
+        c.addView(diagView);
+        c.addView(smallButton("Проверить", this::diagnostics));
+        return c;
+    }
+
+    private View logCard() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackgroundColor(0xFF0F141A);
+        c.setPadding(dp(12), dp(8), dp(12), dp(8));
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(text("ЛОГ", 11, DIM, true), new LinearLayout.LayoutParams(0, WRAP, 1f));
+        TextView copy = smallButton("Копировать", this::copyLog);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(WRAP, WRAP);
+        cp.rightMargin = dp(6);
+        head.addView(copy, cp);
+        head.addView(smallButton("Очистить", () -> { Engine.clearLog(); refreshLog(); }));
+        c.addView(head);
+
+        logView = text("", 9.5f, 0xFF9DA7B3, false);
+        logView.setTypeface(Typeface.MONOSPACE);
+        logView.setTextIsSelectable(true);
+        ScrollView s = new ScrollView(this);
+        s.addView(logView);
+        c.addView(s, new LinearLayout.LayoutParams(MATCH, dp(170)));
+        return c;
+    }
+
+    // ------------------------------------------------------------------ действия
 
     private void status(String s) { statusView.setText(s); }
     private void refreshLog() { logView.setText(Engine.logText()); }
@@ -150,7 +364,12 @@ public class PortHubActivity extends AppCompatActivity {
             Engine.log("Студия ещё не установлена — нужен установщик");
             String guid = Engine.fetchVersionGuid();
             if (guid == null) return;
-            File f = Engine.downloadInstaller(guid, p -> ui.post(() -> status("Скачано " + p + "%")));
+            ui.post(() -> { bar.setVisibility(View.VISIBLE); bar.setProgress(0); });
+            File f = Engine.downloadInstaller(guid, p -> ui.post(() -> {
+                bar.setProgress(p);
+                status("Скачано " + p + "%");
+            }));
+            ui.post(() -> bar.setVisibility(View.GONE));
             if (f == null) return;
             ui.post(() -> Engine.launch(this, c, "D:\\" + f.getName()));
         });
@@ -167,12 +386,13 @@ public class PortHubActivity extends AppCompatActivity {
         StringBuilder sb = new StringBuilder();
         sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append('\n');
         sb.append("Устройство: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
-        sb.append("Плата/SoC: ").append(Build.HARDWARE).append('\n');
+        sb.append("SoC: ").append(Build.HARDWARE).append('\n');
         sb.append("Ядер: ").append(Runtime.getRuntime().availableProcessors()).append('\n');
         sb.append("RAM: ").append(ramGb()).append(" ГБ\n");
         sb.append("Свободно: ").append(freeGb()).append(" ГБ\n");
         sb.append("GPU: ").append(gpuRenderer()).append('\n');
-        sb.append("Оценка под DXVK: ").append(score()).append(" / 100\n");
+        sb.append("Оценка под DXVK: ").append(score()).append(" / 100");
+        diagView.setText(sb.toString());
         Engine.log(sb.toString());
         refreshLog();
     }
@@ -236,4 +456,4 @@ public class PortHubActivity extends AppCompatActivity {
             if (prev != null) prev.uncaughtException(t, e);
         });
     }
-          }
+            }
